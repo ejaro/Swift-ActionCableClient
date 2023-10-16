@@ -74,7 +74,7 @@ open class ActionCableClient {
     open var headers : [String: String]? {
         get { return socket.request.allHTTPHeaderFields }
         set {
-            for (field, value) in headers ?? [:] {
+            for (field, value) in newValue ?? [:] {
                 socket.request.setValue(value, forHTTPHeaderField: field)
             }
         }
@@ -323,11 +323,15 @@ extension ActionCableClient {
 extension ActionCableClient {
     
     fileprivate func setupWebSocket() {
-        self.socket.onConnect = { [weak self] in self!.didConnect() } as (() -> Void)
-        self.socket.onDisconnect = { [weak self] (error: Swift.Error?) in self!.didDisconnect(error) }
-        self.socket.onText       = { [weak self] (text: String) in self!.onText(text) }
-        self.socket.onData       = { [weak self] (data: Data) in self!.onData(data) }
-        self.socket.onPong       = { [weak self] (data: Data?) in self!.didPong() }
+        self.socket.onConnect    = { [weak self] in self?.didConnect() }
+        self.socket.onDisconnect = { [weak self] (error: Swift.Error?) in self?.didDisconnect(error) }
+        self.socket.onText       = { [weak self] (text: String) in
+            if let weakSelf = self{
+                weakSelf.onText(text)
+            }
+        }
+        self.socket.onData       = { [weak self] (data: Data) in self?.onData(data) }
+        self.socket.onPong       = { [weak self] (data: Data?) in self?.didPong() }
     }
     
     fileprivate func didConnect() {
@@ -353,14 +357,14 @@ extension ActionCableClient {
         
         let channels = self.channels
         for (_, channel) in channels {
-            let message = Message(channelName: channel.uid, actionName: nil, messageType: MessageType.hibernateSubscription, data: nil, error: nil)
+            let message = Message(channelName: channel.name, actionName: nil, messageType: MessageType.hibernateSubscription, data: nil, error: nil)
             onMessage(message)
         }
         
         // Attempt Reconnection?
         if let unwrappedError = error {
           connectionError = ConnectionError(from: unwrappedError)
-            attemptReconnect = connectionError!.recoverable
+            attemptReconnect = connectionError?.recoverable ?? true
         }
         
         // Reconcile reconncetion attempt with manual disconnect
@@ -408,10 +412,12 @@ extension ActionCableClient {
     }
     
     fileprivate func onText(_ text: String) {
-        ActionCableConcurrentQueue.async(execute: { () -> Void in
+        ActionCableConcurrentQueue.async(execute: {[weak self] () -> Void in
             do {
                 let message = try JSONSerializer.deserialize(text)
-                self.onMessage(message)
+                if let weakSelf = self{
+                    weakSelf.onMessage(message)
+                }
             } catch {
                 print("[ActionCableClient] Error decoding message: \(error)")
             }
@@ -429,52 +435,58 @@ extension ActionCableClient {
                     DispatchQueue.main.async(execute: callback)
                 }
             case .message:
-                if let channel = channels[message.channelName!] {
-                    // Notify Channel
-                    channel.onMessage(message)
-                    
-                    if let callback = onChannelReceive {
-                        DispatchQueue.main.async(execute: { callback(channel, message.data, message.error) } )
+                if let messageChannelName = message.channelName{
+                    if let channel = channels[messageChannelName] {
+                        // Notify Channel
+                        channel.onMessage(message)
+                        if let callback = onChannelReceive {
+                            DispatchQueue.main.async(execute: { callback(channel, message.data, message.error) } )
+                        }
                     }
                 }
+                
             case .confirmSubscription:
-                if let channel = unconfirmedChannels.removeValue(forKey: message.channelName!) {
-                    self.channels.updateValue(channel, forKey: channel.uid)
-                    
-                    // Notify Channel
-                    channel.onMessage(message)
-                    
-                    if let callback = onChannelSubscribed {
-                        DispatchQueue.main.async(execute: { callback(channel) })
+                if let messageChannelName = message.channelName{
+                    if let channel = unconfirmedChannels.removeValue(forKey: messageChannelName) {
+                        self.channels.updateValue(channel, forKey: channel.name)
+                        // Notify Channel
+                        channel.onMessage(message)
+                        if let callback = onChannelSubscribed {
+                            DispatchQueue.main.async(execute: { callback(channel) })
+                        }
                     }
                 }
             case .rejectSubscription:
                 // Remove this channel from the list of unconfirmed subscriptions
-                if let channel = unconfirmedChannels.removeValue(forKey: message.channelName!) {
-                    
-                    // Notify Channel
-                    channel.onMessage(message)
-                    
-                    if let callback = onChannelRejected {
-                        DispatchQueue.main.async(execute: { callback(channel) })
+                if let messageChannelName = message.channelName{
+                    if let channel = unconfirmedChannels.removeValue(forKey: messageChannelName) {
+                        // Notify Channel
+                        channel.onMessage(message)
+                        
+                        if let callback = onChannelRejected {
+                            DispatchQueue.main.async(execute: { callback(channel) })
+                        }
                     }
                 }
-            case .hibernateSubscription:
-              if let channel = channels.removeValue(forKey: message.channelName!) {
-                // Add channel into unconfirmed channels
-                unconfirmedChannels[channel.uid] = channel
                 
-                // We want to treat this like an unsubscribe.
-                fallthrough
-              }
+            case .hibernateSubscription:
+                if let messageChannelName = message.channelName{
+                    if let channel = channels.removeValue(forKey: messageChannelName) {
+                      // Add channel into unconfirmed channels
+                      unconfirmedChannels[channel.name] = channel
+                      // We want to treat this like an unsubscribe.
+                      fallthrough
+                    }
+                }else{fallthrough}
+              
             case .cancelSubscription:
-                if let channel = channels.removeValue(forKey: message.channelName!) {
-                    
-                    // Notify Channel
-                    channel.onMessage(message)
-                    
-                    if let callback = onChannelUnsubscribed {
-                        DispatchQueue.main.async(execute: { callback(channel) })
+                if let messageChannelName = message.channelName{
+                    if let channel = channels.removeValue(forKey: messageChannelName) {
+                        // Notify Channel
+                        channel.onMessage(message)
+                        if let callback = onChannelUnsubscribed {
+                            DispatchQueue.main.async(execute: { callback(channel) })
+                        }
                     }
                 }
             }
@@ -491,9 +503,9 @@ extension ActionCableClient : CustomDebugStringConvertible {
     }
 }
 
-extension ActionCableClient : CustomPlaygroundQuickLookable {
-  public var customPlaygroundQuickLook: PlaygroundQuickLook {
-        return PlaygroundQuickLook.url(socket.currentURL.absoluteString)
+extension ActionCableClient : CustomPlaygroundDisplayConvertible {
+    public var playgroundDescription: Any {
+        return socket.currentURL.absoluteString
     }
 }
 
