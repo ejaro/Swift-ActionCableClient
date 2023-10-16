@@ -193,7 +193,11 @@ open class Channel: Hashable, Equatable {
     internal var onReceiveActionHooks: Dictionary<String, OnReceiveClosure> = Dictionary()
     internal unowned var client: ActionCableClient
     internal var actionBuffer: Array<Action> = Array()
-    open let hashValue: Int = Int(arc4random_uniform(UInt32(Int32.max)))
+    //public let hashValue: Int = Int(arc4random_uniform(UInt32(Int32.max)))
+    public func hash(into hasher: inout Hasher) {
+        let value = Int(arc4random_uniform(UInt32(Int32.max)))
+        hasher.combine(value)
+    }
 }
 
 public func ==(lhs: Channel, rhs: Channel) -> Bool {
@@ -259,12 +263,17 @@ extension Channel: CustomDebugStringConvertible {
     }
 }
 
-extension Channel: CustomPlaygroundQuickLookable {
+extension Channel: CustomPlaygroundDisplayConvertible {
+    public var playgroundDescription: Any {
+        return self.name
+    }
+    
     /// A custom playground quick look for this instance.
     ///
     /// If this type has value semantics, the `PlaygroundQuickLook` instance
     /// should be unaffected by subsequent mutations.
-    public var customPlaygroundQuickLook: PlaygroundQuickLook {
-              return PlaygroundQuickLook.text(self.name)
-    }
+//    public var customPlaygroundQuickLook: PlaygroundQuickLook {
+//              return PlaygroundQuickLook.text(self.name)
+//    }
+    
 }
