@@ -16,14 +16,7 @@ To install, simply:
 Add the following line to your `Podfile` and run `pod install`
 
 ```ruby
-pod "ActionCableClient"
-```
-
-#### Carthage
-
-Add the following to your `Cartfile` and run `carthage update` as normal.
-```ruby
-github "danielrhodes/Swift-ActionCableClient"
+pod 'ActionCableClient', :git => 'https://github.com/ejaro/Swift-ActionCableClient'
 ```
 
 
